@@ -9,7 +9,7 @@ from PIL import Image
 from io import BytesIO
 
 st.set_page_config(page_title="Camage Repair Cost Estimator") #HTML title
-st.title("Damage Repair Cost Estimator") #page title
+st.title("crest Repair Cost Estimator") #page title
 
 from botocore.config import Config
 
