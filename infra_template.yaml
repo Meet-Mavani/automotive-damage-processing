@@ -88,7 +88,7 @@ Resources:
         PrivilegedMode: true
       Source:
         Type: GITHUB
-        Location: !Sub 'https://github.com/aws-samples/automotive-damage-processing.git'
+        Location: !Sub 'https://github.com/meet-byte/automotive-damage-processing.git'
         BuildSpec: containers/inference/buildspec.yaml
       EncryptionKey: alias/aws/s3
 
