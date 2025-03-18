@@ -25,7 +25,7 @@ session = boto3.Session()
 
 #Get SSM Parameter values for OpenSearch Domain and
 ssm = session.client('ssm')
-parameters = ['/car-repair/collection-domain-name', '/car-repair/s3-bucket', '/car-repair/s3-bucket-source'] 
+parameters = ['/car-repair/https://drjfp6x18aibl.cloudfront.net', '/car-repair/starting-stack-repaircostbucket-r1oy0vs2zjvu ', '/car-repair/starting-stack-sources3bucket-huaylr4jp78y'] 
 response = ssm.get_parameters(
     Names=parameters,
     WithDecryption=True
