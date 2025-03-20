@@ -11,7 +11,7 @@ import datetime
 
 # Streamlit UI Config
 st.set_page_config(page_title="Damage Repair Cost Estimator updated")
-st.title("Damage Repair Cost Estimator")
+st.title("Damage Repair Cost Estimator updated")
 
 from botocore.config import Config
 
