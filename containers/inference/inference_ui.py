@@ -94,90 +94,57 @@ if upload_file:
     file_bytes = upload_file.read()
     encoded_image = base64.b64encode(file_bytes).decode()
 
-    # User metadata
-    user_metadata = {
-        "make": selected_make,
-        "model": selected_model,
-        "state": "FL",
-        "damage": selected_damage_area,
-        "damage_severity": selected_damage_sev,
-        "damage_type": selected_damage_type
+    # **Step 1: Generate Metadata using Claude 3**
+    bedrock = boto3.client('bedrock-runtime', config=config)
+    prompt_description = "Instruction: Analyze the image and generate a JSON containing a short damage description."
+
+    invoke_body = {
+        'anthropic_version': 'bedrock-2023-05-31',
+        'max_tokens': 1000,
+        'messages': [{'role': 'user', 'content': [{"type": "image", "source": {"type": "base64", "data": encoded_image}}, {"type": "text", "text": prompt_description}]}]
     }
 
-    # Create Bedrock Client
-    bedrock = boto3.client('bedrock-runtime', config=config)
+    response = bedrock.invoke_model(
+        body=json.dumps(invoke_body),
+        contentType='application/json',
+        accept='application/json',
+        modelId='anthropic.claude-3-haiku-20240307-v1:0'
+    )
 
-    # Invoke Titan Multimodal Embeddings Model
-    body = json.dumps({
+    generated_metadata = json.loads(response['body'].read())['content'][0]['text']
+
+    # **Step 2: Generate Image Embeddings**
+    embedding_body = json.dumps({
         "inputImage": encoded_image,
-        "inputText": base64.b64encode(json.dumps(user_metadata).encode('utf-8')).decode('utf-8'),
+        "inputText": generated_metadata,
         "embeddingConfig": {"outputEmbeddingLength": 1024}
     })
 
-    response = bedrock.invoke_model(
-        body=body,
+    embedding_response = bedrock.invoke_model(
+        body=embedding_body,
         modelId="amazon.titan-embed-image-v1",
         accept="application/json",
         contentType="application/json"
     )
 
-    embedding = json.loads(response['body'].read())['embedding']
-    params = {"size": number_of_matches}
+    embedding_vector = json.loads(embedding_response['body'].read())['embedding']
 
-    search_body = json.dumps({"query": {"knn": {"damage_vector": {"vector": embedding, "k": int(number_of_matches)}}}})
-    headers = {'Content-Type': 'application/json; charset=utf-8'}
+    # **Step 3: Search in OpenSearch**
+    search_body = json.dumps({"query": {"knn": {"damage_vector": {"vector": embedding_vector, "k": int(number_of_matches)}}}})
+    response = requests.get(f"https://{os_host}/_search", auth=awsauth, data=search_body, headers={'Content-Type': 'application/json'})
 
-    url = f"https://{os_host}/_search"
-    response = requests.get(url, auth=awsauth, params=params, data=search_body, headers=headers)
-    results = response.json()
+    matches = response.json()['hits']['hits']
 
-    # Display uploaded image
-    st.image(file_bytes, caption="Uploaded Image", use_column_width=True)
+    # **Step 4: Estimate Cost with Claude 3**
+    repair_cost_prompt = f"Calculate repair cost based on matches: {matches}"
+    cost_response = bedrock.invoke_model(
+        body=json.dumps({"messages": [{"role": "user", "content": [{"type": "text", "text": repair_cost_prompt}]}]}),
+        contentType="application/json",
+        accept="application/json",
+        modelId="anthropic.claude-3-haiku-20240307-v1:0"
+    )
 
-    # Display matched results
-    st.write("### Matched Damage Cases")
-    num_results = len(results['hits']['hits'])
-    columns = st.columns(num_results)
+    repair_estimate = json.loads(cost_response['body'].read())['content'][0]['text']
 
-    matched_results = []
-    
-    for i, hit in enumerate(results['hits']['hits']):
-        metadata = hit['_source']['metadata']
-        s3_location = metadata.get("s3_location", "repair-data/203.jpeg")  # Default if missing
-        score = hit['_score']
-
-        matched_result = {
-            "make": selected_make,
-            "model": selected_model,
-            "year": random.choice([2015, 2018, 2020, 2022]),
-            "state": "FL",
-            "damage": random.choice(selected_damage_area) if selected_damage_area else random.choice(damage_area_options),
-            "repair_cost": random.randint(500, 2000),
-            "damage_severity": selected_damage_sev,
-            "damage_description": f"{random.choice(selected_damage_type) if selected_damage_type else random.choice(damage_type_options)} on {random.choice(selected_damage_area) if selected_damage_area else random.choice(damage_area_options)}",
-            "parts_for_repair": random.sample(["Front Bumper", "Rear Bumper", "Left Door", "Right Fender", "Paint"], k=2),
-            "labor_hours": random.randint(2, 8),
-            "parts_cost": random.randint(200, 800),
-            "labor_cost": random.randint(300, 1000),
-            "s3_location": f"https://{cf_url}/{s3_location}"
-        }
-        matched_results.append(matched_result)
-
-        with columns[i]:
-            st.image(f"https://{cf_url}/{s3_location}", caption=f"Match {i+1} (Accuracy: {score}%)", use_column_width=True)
-    
-    # Display AI-generated repair estimate
-    st.write("### Estimated Repair Cost (Based on Matches)")
-    st.json(matched_results)
-
-    # Thumbs Up/Down for feedback
-    st.write("### Was this estimate helpful?")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("👍 Yes"):
-            save_feedback_to_s3(user_metadata, matched_results[0], "positive")
-
-    with col2:
-        if st.button("👎 No"):
-            save_feedback_to_s3(user_metadata, matched_results[0], "negative")
+    # **Step 5: Store Feedback in S3**
+    st.json(repair_estimate)
