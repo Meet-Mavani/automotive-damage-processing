@@ -6,12 +6,11 @@ from requests_aws4auth import AWS4Auth
 import requests
 import streamlit as st
 from PIL import Image
-import random
+from io import BytesIO
 import datetime
 
-# Streamlit UI Config
-st.set_page_config(page_title="Damage Repair Cost Estimator updated")
-st.title("Damage Repair Cost Estimator updated")
+st.set_page_config(page_title="Damage Repair Cost Estimator")  # HTML title
+st.title("Damage Repair Cost Estimator")  # Page title
 
 from botocore.config import Config
 
@@ -22,24 +21,23 @@ config = Config(
 # Boto3 session
 session = boto3.Session()
 
-# S3 Bucket Name
+# S3 Bucket Name for feedback storage
 s3_bucket_name = "vatsal-meet-harsh-json-data"
 
-# Get SSM Parameters for OpenSearch and CloudFront URL
+# Get SSM Parameter values for OpenSearch and CloudFront URL
 ssm = session.client('ssm')
 parameters = ['/car-repair/collection-domain-name', '/car-repair/distribution-domain-name']
 response = ssm.get_parameters(Names=parameters, WithDecryption=True)
 
-# Set OpenSearch Details
+# OpenSearch Details
 os_host = response['Parameters'][0]['Value'][8:]  # Remove "https://"
 os_index_name = 'repair-cost-data'
 
-# Set CloudFront URL
+# CloudFront URL
 cf_url = response['Parameters'][1]['Value']
 
 # Initialize OpenSearch Client
 credentials = session.get_credentials()
-client = session.client('opensearchserverless')
 service = 'aoss'
 region = session.region_name
 awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, region, service, session_token=credentials.token)
@@ -69,7 +67,7 @@ upload_file = st.sidebar.file_uploader("Upload your damage image", key=f"uploade
 # Function to save feedback to S3
 def save_feedback_to_s3(metadata, matched_result, feedback):
     feedback_data = {**matched_result, "feedback": feedback}
-    
+
     # Generate unique filename based on timestamp
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     file_name = f"feedback-{timestamp}.json"
@@ -88,7 +86,6 @@ def save_feedback_to_s3(metadata, matched_result, feedback):
 
     st.success(f"✅ Feedback saved successfully in S3! File: {file_name}")
 
-# Process uploaded file
 if upload_file:
     st.session_state.uploader_key += 1
     file_bytes = upload_file.read()
@@ -133,10 +130,10 @@ if upload_file:
     search_body = json.dumps({"query": {"knn": {"damage_vector": {"vector": embedding_vector, "k": int(number_of_matches)}}}})
     response = requests.get(f"https://{os_host}/_search", auth=awsauth, data=search_body, headers={'Content-Type': 'application/json'})
 
-    matches = response.json()['hits']['hits']
+    search_results = response.json()['hits']['hits']
 
     # **Step 4: Estimate Cost with Claude 3**
-    repair_cost_prompt = f"Calculate repair cost based on matches: {matches}"
+    repair_cost_prompt = f"Calculate repair cost based on matches: {search_results}"
     cost_response = bedrock.invoke_model(
         body=json.dumps({"messages": [{"role": "user", "content": [{"type": "text", "text": repair_cost_prompt}]}]}),
         contentType="application/json",
@@ -146,5 +143,33 @@ if upload_file:
 
     repair_estimate = json.loads(cost_response['body'].read())['content'][0]['text']
 
-    # **Step 5: Store Feedback in S3**
-    st.json(repair_estimate)
+    # **Step 5: Display Matches and Feedback Option**
+    num_results = len(search_results)
+    columns = st.columns(num_results + 1)
+
+    with columns[0]:
+        st.write('Uploaded Image:')
+        st.image(file_bytes)
+
+    for i, hit in enumerate(search_results):
+        metadata = hit['_source']['metadata']
+        s3_location = metadata['s3_location']
+        score = hit['_score']
+        
+        with columns[i + 1]:
+            image_url = f'https://{cf_url}/{s3_location}'
+            response = requests.get(image_url)
+            img = Image.open(BytesIO(response.content))
+            st.write(f'Match {i + 1} (Score: {score})')
+            st.image(img)
+
+            # Thumbs Up/Down Feedback
+            col1, col2 = st.columns(2)
+            if col1.button(f"👍 Match {i + 1}", key=f"up_{i}"):
+                save_feedback_to_s3(metadata, hit, "positive")
+            if col2.button(f"👎 Match {i + 1}", key=f"down_{i}"):
+                save_feedback_to_s3(metadata, hit, "negative")
+
+    # **Step 6: Show Repair Estimate**
+    st.subheader("Estimated Repair Cost")
+    st.write(repair_estimate)
