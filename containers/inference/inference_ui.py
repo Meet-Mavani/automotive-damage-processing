@@ -9,8 +9,8 @@ from PIL import Image
 from io import BytesIO
 import datetime
 
-st.set_page_config(page_title="Damage Repair Cost Estimator")  # HTML title
-st.title("Damage Repair Cost Estimator")  # Page title
+st.set_page_config(page_title="Damage Repair Cost Estimator Enhanced")  # HTML title
+st.title("Damage Repair Cost Estimator Enhanced")  # Page title
 
 from botocore.config import Config
 
@@ -24,7 +24,7 @@ session = boto3.Session()
 # S3 Bucket Name for feedback storage
 s3_bucket_name = "vatsal-meet-harsh-json-data"
 
-# Get SSM Parameter values for OpenSearch and CloudFront URL
+# Get SSM Parameter values for OpenSearch Domain and CloudFront URL
 ssm = session.client('ssm')
 parameters = ['/car-repair/collection-domain-name', '/car-repair/distribution-domain-name']
 response = ssm.get_parameters(Names=parameters, WithDecryption=True)
@@ -98,7 +98,7 @@ if upload_file:
     invoke_body = {
         'anthropic_version': 'bedrock-2023-05-31',
         'max_tokens': 1000,
-        'messages': [{'role': 'user', 'content': [{"type": "image", "source": {"type": "base64", "data": encoded_image}}, {"type": "text", "text": prompt_description}]}]
+        'messages': [{'role': 'user', 'content': [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": encoded_image}}, {"type": "text", "text": prompt_description}]}]
     }
 
     response = bedrock.invoke_model(
